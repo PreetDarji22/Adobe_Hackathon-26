@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><title>Loading...</title></head>
+<body>
+  <div id="root"></div>
+  <script>
+    var config = {"apiUrl":"https://api.example.com","featureFlags":{"a":true,"b":false},"chunks":["main.abc123.js","vendor.def456.js"]};
+    function bootstrapApp(cfg){ /* long inline bundle-ish content to raise script ratio */
+      var x = 0; for (var i=0;i<1000;i++){ x += i; }
+      return x + JSON.stringify(cfg);
+    }
+    bootstrapApp(config);
+  </script>
+</body>
+</html>
