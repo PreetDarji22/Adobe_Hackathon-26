@@ -9,7 +9,7 @@ allowed-tools: ["bash"]
 
 ## When to use
 Called by `audit-orchestrator` for every audited URL. Can also be run
-standalone (`python3 scripts/crawl_check.py <url>`) to debug discoverability
+standalone (`python scripts/crawl_check.py <url>`) to debug discoverability
 issues in isolation.
 
 ## Inputs

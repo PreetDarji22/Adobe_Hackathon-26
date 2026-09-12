@@ -127,7 +127,7 @@ Python standard library (`urllib`, `html.parser`, `json`, `urllib.robotparser`,
 
 ```bash
 cd brand-ai-readiness-audit
-python3 --version   # 3.9+
+python --version   # 3.9+
 ```
 
 ## Usage
@@ -135,16 +135,16 @@ python3 --version   # 3.9+
 Run the whole audit through the entrypoint:
 
 ```bash
-python3 skills/audit-orchestrator/scripts/orchestrate.py https://example.com
-python3 skills/audit-orchestrator/scripts/orchestrate.py https://example.com --out report.json
+python skills/audit-orchestrator/scripts/orchestrate.py https://example.com
+python skills/audit-orchestrator/scripts/orchestrate.py https://example.com --out report.json
 ```
 
 Or run an individual sub-skill in isolation:
 
 ```bash
-python3 skills/crawl-render-audit/scripts/crawl_check.py https://example.com
-python3 skills/freshness-corroboration/scripts/freshness_check.py https://example.com
-python3 skills/engagement-audit/scripts/engagement_check.py https://example.com
+python skills/crawl-render-audit/scripts/crawl_check.py https://example.com
+python skills/freshness-corroboration/scripts/freshness_check.py https://example.com
+python skills/engagement-audit/scripts/engagement_check.py https://example.com
 ```
 
 ## Testing & Validation Status
@@ -159,13 +159,7 @@ python3 skills/engagement-audit/scripts/engagement_check.py https://example.com
 All 55 tests run offline against local HTML fixtures in `tests/fixtures/` — `webutils.fetch` and `webutils.check_robots` are mocked, so no network access is required:
 
 ```bash
-# Windows
 python -m unittest discover -s tests -v
-# or
-py -m unittest discover -s tests -v
-
-# Linux / macOS
-python3 -m unittest discover -s tests -v
 ```
 
 Covers: HTML/JSON-LD extraction, named AI crawler access checks (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Google-Extended`, `Applebot-Extended`), declared sitemap validation, `/llms.txt` detection, `sameAs` authority validation, entity candidate extraction tightening, subdomain-aware navigation, priority-severity reconciliation, and end-to-end orchestrator runs.
@@ -173,11 +167,7 @@ Covers: HTML/JSON-LD extraction, named AI crawler access checks (`GPTBot`, `Clau
 ### Validate Marketplace Package
 
 ```bash
-# Windows
 python validate_marketplace.py
-
-# Linux / macOS
-python3 validate_marketplace.py
 ```
 
 ## Safety / guardrails
