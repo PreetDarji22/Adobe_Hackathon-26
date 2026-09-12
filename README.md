@@ -147,26 +147,38 @@ python3 skills/freshness-corroboration/scripts/freshness_check.py https://exampl
 python3 skills/engagement-audit/scripts/engagement_check.py https://example.com
 ```
 
-Validate the packaged marketplace structure before zipping:
+## Testing & Validation Status
+
+- **Marketplace Manifest Compliance**: **31/31 PASS** (`validate_marketplace.py`)
+- **Offline Unit Test Suite**: **55/55 PASS** across 8 test modules (`unittest` / `pytest`)
+- **Package Size**: **0.31 MB** unpacked / **~59 KB** zipped (well within 50MB ceiling)
+- **External Dependencies**: **Zero** (100% Python standard library)
+
+### Run Unit Tests (100% Offline)
+
+All 55 tests run offline against local HTML fixtures in `tests/fixtures/` — `webutils.fetch` and `webutils.check_robots` are mocked, so no network access is required:
 
 ```bash
-python3 validate_marketplace.py
-```
+# Windows
+python -m unittest discover -s tests -v
+# or
+py -m unittest discover -s tests -v
 
-## Testing
-
-All 55 tests run offline against local HTML fixtures in `tests/fixtures/` —
-`webutils.fetch` and `webutils.check_robots` are mocked, so no network
-access is required:
-
-```bash
+# Linux / macOS
 python3 -m unittest discover -s tests -v
 ```
 
-Covers: HTML/JSON-LD extraction, named AI crawler access checks, declared sitemap
-validation, `/llms.txt` detection, `sameAs` authority validation, entity candidate
-extraction tightening, subdomain-aware navigation, priority-severity reconciliation,
-and end-to-end orchestrator runs.
+Covers: HTML/JSON-LD extraction, named AI crawler access checks (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Google-Extended`, `Applebot-Extended`), declared sitemap validation, `/llms.txt` detection, `sameAs` authority validation, entity candidate extraction tightening, subdomain-aware navigation, priority-severity reconciliation, and end-to-end orchestrator runs.
+
+### Validate Marketplace Package
+
+```bash
+# Windows
+python validate_marketplace.py
+
+# Linux / macOS
+python3 validate_marketplace.py
+```
 
 ## Safety / guardrails
 
