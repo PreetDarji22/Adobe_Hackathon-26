@@ -46,17 +46,34 @@ MIN_NAV_LINKS_EXPECTED = 2
 MIN_FIRST_TEXT_CHARS_FOR_VALUE_PROP = 40
 
 
-def _finding(finding_id, title, severity, evidence, action_summary,
-             action_priority, action_how=None, action_why=None, url=None,
-             confidence="medium", check=None):
+def _finding(
+    finding_id: str,
+    title: str,
+    severity: str,
+    evidence: str,
+    action_summary: str,
+    action_priority: str = None,
+    action_how: str = None,
+    action_why: str = None,
+    url: str = None,
+    confidence: str = "medium",
+    check: str = None,
+) -> dict:
+    priority = action_priority if action_priority is not None else severity
     return Finding(
-        id=finding_id, title=title, severity=severity, evidence=evidence,
+        id=finding_id,
+        title=title,
+        severity=severity,
+        evidence=evidence,
         suggested_action=SuggestedAction(
-            summary=action_summary, priority=action_priority,
+            summary=action_summary, priority=priority,
             how=action_how, why=action_why,
         ),
-        category="engagement", check=check, url=url,
-        confidence=confidence, source_skill=SKILL_NAME,
+        category="engagement",
+        check=check,
+        url=url,
+        confidence=confidence,
+        source_skill=SKILL_NAME,
     ).to_dict()
 
 
@@ -93,7 +110,8 @@ def run(url: str, id_prefix: str = "EN") -> dict:
             "Add a single clear H1 stating what this page is / what the "
             "visitor can do here, matching the intent that likely brought "
             "them to this URL.",
-            "medium",
+            action_priority="medium",
+            action_how="Add a single primary <h1> element at the top of the <main> section clearly stating the core subject or service.",
             action_why="An H1 is usually the fastest orientation cue for "
                        "both a human skimming and an assistant summarizing "
                        "the page's purpose.",
@@ -107,7 +125,9 @@ def run(url: str, id_prefix: str = "EN") -> dict:
             f"{url} has {len(h1s)} <h1> elements: {h1s[:5]}.",
             "Consolidate to a single primary H1 that states the page's "
             "main topic; use H2/H3 for subsections.",
-            "low", url=url, confidence="medium", check="h1_count",
+            action_priority="low",
+            action_how="Retain a single authoritative <h1> tag for the primary topic and convert secondary headings to <h2> or <h3> elements.",
+            url=url, confidence="medium", check="h1_count",
         ))
 
     # 2. Title/H1/meta-description topical overlap (context-retention proxy)
@@ -146,7 +166,8 @@ def run(url: str, id_prefix: str = "EN") -> dict:
             "Align the <title>, H1, and meta description around the same "
             "core topic/intent so a visitor arriving via a search result "
             "or AI answer sees consistent framing, not a mismatch.",
-            "medium",
+            action_priority="medium",
+            action_how="Align core topic and brand keywords across the <title> tag and the primary <h1> heading for topical consistency.",
             action_why="Per the PS: context retention between the likely "
                        "discovery intent and the landing page matters -- a "
                        "mismatch between what was promised and what's shown "
@@ -163,11 +184,15 @@ def run(url: str, id_prefix: str = "EN") -> dict:
             "Align the meta description with the title/page topic so "
             "search and AI-generated snippets accurately represent the "
             "page.",
-            "low", url=url, confidence="low", check="title_meta_alignment",
+            action_priority="low",
+            action_how="Incorporate key brand and topic terms from <title> into the <meta name='description'> content attribute.",
+            url=url, confidence="low", check="title_meta_alignment",
         ))
 
-    # 3. Navigation presence (same-domain link count as a coarse proxy)
-    internal_links = webutils.resolve_links(url, signals["links"])
+    # 3. Navigation presence (subdomain-aware internal link count)
+    internal_links = webutils.resolve_links(
+        url, signals["links"], same_domain_only=True, allow_subdomains=True
+    )
     if len(internal_links) < MIN_NAV_LINKS_EXPECTED:
         findings.append(_finding(
             next_id(),
@@ -177,7 +202,9 @@ def run(url: str, id_prefix: str = "EN") -> dict:
             "Provide clear paths to related/next content (nav menu, related "
             "links, breadcrumbs) so a visitor who lands here isn't stuck "
             "with nowhere obvious to go.",
-            "medium", url=url, confidence="medium", check="internal_link_count",
+            action_priority="medium",
+            action_how="Add prominent navigation menus, related links, or breadcrumbs in <header> or <nav> connecting visitors to key site areas.",
+            url=url, confidence="medium", check="internal_link_count",
         ))
 
     # 4. CTA presence (check links AND buttons, with context awareness)
@@ -200,7 +227,9 @@ def run(url: str, id_prefix: str = "EN") -> dict:
             "Add an explicit, specific call-to-action (what the visitor "
             "should do next) near the top of the page rather than relying "
             "on implicit navigation.",
-            "low", url=url, confidence="low", check="cta_presence",
+            action_priority="low",
+            action_how="Add a clear action link or button (e.g. <a class='cta' href='/signup'>Get Started</a> or <button>Contact Sales</button>) in a prominent position above the fold.",
+            url=url, confidence="low", check="cta_presence",
         ))
 
     return {

@@ -87,5 +87,118 @@ class TestCrawlCheckFetchFailure(unittest.TestCase):
         self.assertEqual(result["findings"][0]["severity"], "critical")
 
 
+class TestCrawlCheckNamedAICrawlers(unittest.TestCase):
+    @patch.object(webutils, "check_robots", return_value={
+        "robots_txt_found": True,
+        "allowed": True,
+        "robots_url": "https://amazon.example/robots.txt",
+        "disallowed_ai_agents": [
+            {"agent": "GPTBot", "matched_rule": "Disallow: /"},
+            {"agent": "ClaudeBot", "matched_rule": "Disallow: /"},
+        ],
+    })
+    def test_named_ai_crawler_disallow_produces_critical_finding(self, _mock_robots):
+        html = load("good_site.html")
+        with patch.object(webutils, "fetch", side_effect=fake_fetch_factory({"amazon.example": (html, 200)})):
+            result = crawl_check.run("https://amazon.example/")
+        ai_findings = [f for f in result["findings"] if f["check"] == "ai_crawlers_robots"]
+        self.assertEqual(len(ai_findings), 1)
+        self.assertEqual(ai_findings[0]["severity"], "critical")
+        self.assertIn("GPTBot", ai_findings[0]["evidence"])
+        self.assertIn("ClaudeBot", ai_findings[0]["evidence"])
+        self.assertTrue(ai_findings[0]["suggested_action"]["how"])
+
+
+class TestCrawlCheckSitemapHandling(unittest.TestCase):
+    @patch.object(webutils, "check_robots", return_value={
+        "robots_txt_found": True,
+        "allowed": True,
+        "robots_url": "https://wiki.example/robots.txt",
+        "sitemaps_declared": ["https://wiki.example/w/sitemap/0"],
+        "disallowed_ai_agents": [],
+    })
+    def test_declared_sitemap_resolving_produces_no_sitemap_finding(self, _mock_robots):
+        html = load("good_site.html")
+        def custom_fetch(url, timeout=8):
+            if "sitemap" in url:
+                return webutils.FetchResult(url=url, status_code=200, html="<xml></xml>")
+            return webutils.FetchResult(url=url, status_code=200, html=html)
+
+        with patch.object(webutils, "fetch", side_effect=custom_fetch):
+            result = crawl_check.run("https://wiki.example/")
+        sitemap_findings = [f for f in result["findings"] if "sitemap" in f["check"]]
+        self.assertEqual(len(sitemap_findings), 0)
+
+    @patch.object(webutils, "check_robots", return_value={
+        "robots_txt_found": True,
+        "allowed": True,
+        "robots_url": "https://broken-sitemap.example/robots.txt",
+        "sitemaps_declared": ["https://broken-sitemap.example/sitemap-missing.xml"],
+        "disallowed_ai_agents": [],
+    })
+    def test_declared_sitemap_404_produces_declared_sitemap_broken_finding(self, _mock_robots):
+        html = load("good_site.html")
+        def custom_fetch(url, timeout=8):
+            if "sitemap" in url:
+                return webutils.FetchResult(url=url, status_code=404, html="")
+            return webutils.FetchResult(url=url, status_code=200, html=html)
+
+        with patch.object(webutils, "fetch", side_effect=custom_fetch):
+            result = crawl_check.run("https://broken-sitemap.example/")
+        broken_sitemap_findings = [f for f in result["findings"] if f["check"] == "sitemap_declared_broken"]
+        self.assertEqual(len(broken_sitemap_findings), 1)
+        self.assertEqual(broken_sitemap_findings[0]["severity"], "medium")
+        self.assertIn("sitemap-missing.xml", broken_sitemap_findings[0]["evidence"])
+
+
+class TestCrawlCheckLlmsTxt(unittest.TestCase):
+    @patch.object(webutils, "check_robots", return_value={
+        "robots_txt_found": True, "allowed": True, "robots_url": "u", "disallowed_ai_agents": []
+    })
+    def test_llms_txt_404_produces_low_finding(self, _mock_robots):
+        html = load("good_site.html")
+        def custom_fetch(url, timeout=8):
+            if "llms.txt" in url:
+                return webutils.FetchResult(url=url, status_code=404, html="")
+            return webutils.FetchResult(url=url, status_code=200, html=html)
+
+        with patch.object(webutils, "fetch", side_effect=custom_fetch):
+            result = crawl_check.run("https://good.example/")
+        llms_findings = [f for f in result["findings"] if f["check"] == "llms_txt"]
+        self.assertEqual(len(llms_findings), 1)
+        self.assertEqual(llms_findings[0]["severity"], "low")
+
+    @patch.object(webutils, "check_robots", return_value={
+        "robots_txt_found": True, "allowed": True, "robots_url": "u", "disallowed_ai_agents": []
+    })
+    def test_llms_txt_200_produces_no_finding(self, _mock_robots):
+        html = load("good_site.html")
+        def custom_fetch(url, timeout=8):
+            if "llms.txt" in url:
+                return webutils.FetchResult(url=url, status_code=200, html="# LLMS.txt")
+            return webutils.FetchResult(url=url, status_code=200, html=html)
+
+        with patch.object(webutils, "fetch", side_effect=custom_fetch):
+            result = crawl_check.run("https://good.example/")
+        llms_findings = [f for f in result["findings"] if f["check"] == "llms_txt"]
+        self.assertEqual(len(llms_findings), 0)
+
+    @patch.object(webutils, "check_robots", return_value={
+        "robots_txt_found": True, "allowed": True, "robots_url": "u", "disallowed_ai_agents": []
+    })
+    def test_llms_txt_timeout_does_not_produce_false_missing_finding(self, _mock_robots):
+        html = load("good_site.html")
+        def custom_fetch(url, timeout=8):
+            if "llms.txt" in url:
+                return webutils.FetchResult(url=url, status_code=None, error="timed out")
+            return webutils.FetchResult(url=url, status_code=200, html=html)
+
+        with patch.object(webutils, "fetch", side_effect=custom_fetch):
+            result = crawl_check.run("https://good.example/")
+        llms_findings = [f for f in result["findings"] if f["check"] == "llms_txt"]
+        self.assertEqual(len(llms_findings), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

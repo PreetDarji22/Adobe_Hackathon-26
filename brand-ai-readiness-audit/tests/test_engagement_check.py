@@ -60,5 +60,30 @@ class TestEngagementNoH1(unittest.TestCase):
         self.assertIn("h1_presence", checks)
 
 
+class TestEngagementSubdomainPortal(unittest.TestCase):
+    def test_subdomain_portal_does_not_flag_false_dead_end(self):
+        # Wikipedia-style portal links exclusively to subdomains (en.wikipedia.org, fr.wikipedia.org)
+        html = load("subdomain_portal.html")
+        fake = webutils.FetchResult(url="https://www.wikipedia.org/", status_code=200, html=html)
+        with patch.object(webutils, "fetch", return_value=fake):
+            result = engagement_check.run("https://www.wikipedia.org/")
+        checks = {f["check"] for f in result["findings"]}
+        self.assertNotIn("internal_link_count", checks)
+
+    def test_distinct_registrable_domains_under_multi_part_suffix_not_merged(self):
+        # Page on service.gov.uk linking only to unrelated external co.uk domains
+        html = """<!DOCTYPE html>
+        <html><head><title>Gov Service</title></head><body>
+        <h1>Service Portal</h1>
+        <a href="https://www.commercial-site.co.uk">External Commercial</a>
+        </body></html>"""
+        fake = webutils.FetchResult(url="https://www.service.gov.uk/", status_code=200, html=html)
+        with patch.object(webutils, "fetch", return_value=fake):
+            result = engagement_check.run("https://www.service.gov.uk/")
+        checks = {f["check"] for f in result["findings"]}
+        self.assertIn("internal_link_count", checks)
+
+
 if __name__ == "__main__":
     unittest.main()
+

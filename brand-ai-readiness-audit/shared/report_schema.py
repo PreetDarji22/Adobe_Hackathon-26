@@ -101,7 +101,18 @@ def validate_report(report: dict) -> list[str]:
                     errors.append(
                         f"finding[{i}].suggested_action missing field: '{field_name}'"
                     )
+            pri = action.get("priority")
+            if pri and pri.lower() not in VALID_SEVERITIES:
+                errors.append(f"finding[{i}].suggested_action has invalid priority '{pri}'")
+            # Severity / priority reconciliation: must match unless non-empty 'why' explains divergence
+            if sev and pri and sev.lower() != pri.lower():
+                why = action.get("why")
+                if not why or not str(why).strip():
+                    errors.append(
+                        f"finding[{i}] severity '{sev}' disagrees with suggested_action.priority '{pri}' without an explanatory 'why' field"
+                    )
         if not f.get("evidence"):
             errors.append(f"finding[{i}] has empty/missing evidence")
 
     return errors
+

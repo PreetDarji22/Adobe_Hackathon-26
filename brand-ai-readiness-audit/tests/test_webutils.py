@@ -60,6 +60,81 @@ class TestResolveLinks(unittest.TestCase):
         resolved = webutils.resolve_links("https://acme.example/", links, same_domain_only=False)
         self.assertEqual(resolved, ["https://other.example/x"])
 
+    def test_allow_subdomains_resolves_same_registrable_domain(self):
+        links = [
+            "https://en.wikipedia.org/wiki/Main",
+            "https://fr.wikipedia.org/wiki/Accueil",
+            "https://unrelated.example/page",
+        ]
+        resolved = webutils.resolve_links(
+            "https://www.wikipedia.org/", links, same_domain_only=True, allow_subdomains=True
+        )
+        self.assertIn("https://en.wikipedia.org/wiki/Main", resolved)
+        self.assertIn("https://fr.wikipedia.org/wiki/Accueil", resolved)
+        self.assertNotIn("https://unrelated.example/page", resolved)
+
+    def test_multi_part_public_suffix_does_not_merge_unrelated_domains(self):
+        links = [
+            "https://www.service.gov.uk/start",
+            "https://www.unrelated.co.uk/page",
+            "https://other.service.gov.uk/help",
+        ]
+        # gov.uk is a public suffix -> service.gov.uk is the registrable domain
+        resolved = webutils.resolve_links(
+            "https://www.service.gov.uk/", links, same_domain_only=True, allow_subdomains=True
+        )
+        self.assertIn("https://www.service.gov.uk/start", resolved)
+        self.assertIn("https://other.service.gov.uk/help", resolved)
+        self.assertNotIn("https://www.unrelated.co.uk/page", resolved)
+
+
+class TestRegistrableDomain(unittest.TestCase):
+    def test_standard_domains(self):
+        self.assertEqual(webutils.get_registrable_domain("example.com"), "example.com")
+        self.assertEqual(webutils.get_registrable_domain("sub.example.com"), "example.com")
+        self.assertEqual(webutils.get_registrable_domain("a.b.example.com"), "example.com")
+
+    def test_multi_part_public_suffixes(self):
+        self.assertEqual(webutils.get_registrable_domain("www.service.gov.uk"), "service.gov.uk")
+        self.assertEqual(webutils.get_registrable_domain("docs.service.gov.uk"), "service.gov.uk")
+        self.assertEqual(webutils.get_registrable_domain("shop.brand.co.uk"), "brand.co.uk")
+        self.assertEqual(webutils.get_registrable_domain("www.amazon.co.in"), "amazon.co.in")
+        self.assertEqual(webutils.get_registrable_domain("news.brand.co.jp"), "brand.co.jp")
+
+
+
+class TestCheckRobotsNamedAICrawlers(unittest.TestCase):
+    def test_parses_named_ai_agents(self):
+        from unittest.mock import patch, MagicMock
+        raw_robots = """User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /internal/
+"""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = raw_robots.encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            res = webutils.check_robots("https://amazon.example/")
+
+        self.assertTrue(res["robots_txt_found"])
+        self.assertTrue(res["allowed"])  # * is allowed
+        # GPTBot and ClaudeBot are disallowed at /
+        disallowed_names = [d["agent"] for d in res["disallowed_ai_agents"]]
+        self.assertIn("GPTBot", disallowed_names)
+        self.assertIn("ClaudeBot", disallowed_names)
+        # Google-Extended is allowed at / (only /internal/ blocked)
+        self.assertNotIn("Google-Extended", disallowed_names)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -28,13 +28,18 @@ concrete claims for the orchestrator's agent-level corroboration step.
 4. If a freshness signal exists and is older than 365 days, flag possible
    staleness (medium, escalating to high past ~2 years) — phrased as "may be
    stale, verify," not "is wrong."
-5. Collect entity-name candidates from `<title>`, `<h1>`, and any
-   `name` fields in Organization/LocalBusiness/Corporation JSON-LD. If two
-   or more meaningfully different names are found, flag possible entity
-   ambiguity (low/medium — this is inherently a soft signal).
-6. Build `facts_to_corroborate`: a short list of specific, checkable claims
+5. **sameAs Authority Links Check:** in Organization / Brand / LocalBusiness
+   JSON-LD blocks, check if `sameAs` array of authoritative profile URLs is
+   present. If missing or empty, emit a `low` severity finding to anchor
+   cross-source identity.
+6. Collect entity-name candidates from structured sources (JSON-LD name/legalName,
+   `og:site_name`, `<title>` brand suffix, or sole `<h1>`). Filter out stray
+   sub-headings or nav labels. If two or more distinct conflicting brand
+   names are found, flag possible entity ambiguity.
+7. Build `facts_to_corroborate`: a short list of specific, checkable claims
    (entity name, founding date, address, phone) — evidence to hand to the
    orchestrator's agent-level step, **not** a corroboration result itself.
+
 7. Do **not** call any search/fetch tool for other domains from inside this
    script. Cross-source corroboration is explicitly the orchestrator's
    Procedure step 3 (agent-level), so that every "sources agree/disagree"

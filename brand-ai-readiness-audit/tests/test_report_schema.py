@@ -62,6 +62,22 @@ class TestValidateReport(unittest.TestCase):
         errors = validate_report(report)
         self.assertTrue(any("duplicate id" in e for e in errors))
 
+    def test_unexplained_priority_severity_mismatch_detected(self):
+        report = self._valid_report()
+        report["findings"][0]["severity"] = "high"
+        report["findings"][0]["suggested_action"]["priority"] = "low"
+        errors = validate_report(report)
+        self.assertTrue(any("disagrees with suggested_action.priority" in e for e in errors))
+
+    def test_explained_priority_severity_mismatch_allowed(self):
+        report = self._valid_report()
+        report["findings"][0]["severity"] = "high"
+        report["findings"][0]["suggested_action"]["priority"] = "low"
+        report["findings"][0]["suggested_action"]["why"] = "Urgency is deferred pending core migration."
+        errors = validate_report(report)
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()
+

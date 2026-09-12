@@ -61,5 +61,53 @@ class TestFreshnessFetchFailure(unittest.TestCase):
         self.assertEqual(result["findings"], [])
 
 
+class TestFreshnessSameAs(unittest.TestCase):
+    def test_missing_sameas_in_organization_schema_is_flagged_low(self):
+        # good_site.html has an Organization schema without sameAs
+        html = load("good_site.html")
+        fake = webutils.FetchResult(url="https://acme.example/", status_code=200, html=html)
+        with patch.object(webutils, "fetch", return_value=fake):
+            result = freshness_check.run("https://acme.example/")
+        sameas_findings = [f for f in result["findings"] if f["check"] == "sameas_presence"]
+        self.assertEqual(len(sameas_findings), 1)
+        self.assertEqual(sameas_findings[0]["severity"], "low")
+        self.assertIn("Acme Widgets", sameas_findings[0]["evidence"])
+        self.assertTrue(sameas_findings[0]["suggested_action"]["how"])
+
+    def test_present_sameas_in_organization_schema_is_not_flagged(self):
+        # sameas_org_site.html has an Organization schema with sameAs array
+        html = load("sameas_org_site.html")
+        fake = webutils.FetchResult(url="https://acmecorp.example/", status_code=200, html=html)
+        with patch.object(webutils, "fetch", return_value=fake):
+            result = freshness_check.run("https://acmecorp.example/")
+        sameas_findings = [f for f in result["findings"] if f["check"] == "sameas_presence"]
+        self.assertEqual(len(sameas_findings), 0)
+
+
+class TestEntityCandidateTightening(unittest.TestCase):
+    def test_openai_scenario_does_not_flag_section_headings_as_conflicting_brands(self):
+        html = """<!DOCTYPE html>
+        <html>
+        <head>
+          <title>OpenAI</title>
+          <meta name="description" content="OpenAI is an AI research and deployment company.">
+          <script type="application/ld+json">
+          {"@context":"https://schema.org","@type":"Organization","name":"OpenAI","sameAs":["https://en.wikipedia.org/wiki/OpenAI"]}
+          </script>
+        </head>
+        <body>
+          <h1>Creating safe AGI that benefits all of humanity</h1>
+          <h2>Research & Deployment</h2>
+          <p>We research generative models and how to align them with human values.</p>
+        </body>
+        </html>"""
+        fake = webutils.FetchResult(url="https://openai.example/", status_code=200, html=html)
+        with patch.object(webutils, "fetch", return_value=fake):
+            result = freshness_check.run("https://openai.example/")
+        conflict_findings = [f for f in result["findings"] if f["check"] == "entity_name_consistency"]
+        self.assertEqual(len(conflict_findings), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
+

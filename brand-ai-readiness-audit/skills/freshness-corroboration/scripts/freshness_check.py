@@ -52,17 +52,34 @@ DATE_META_KEYS = (
 YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
 
 
-def _finding(finding_id, title, severity, evidence, action_summary,
-             action_priority, action_how=None, action_why=None, url=None,
-             confidence="medium", check=None):
+def _finding(
+    finding_id: str,
+    title: str,
+    severity: str,
+    evidence: str,
+    action_summary: str,
+    action_priority: str = None,
+    action_how: str = None,
+    action_why: str = None,
+    url: str = None,
+    confidence: str = "medium",
+    check: str = None,
+) -> dict:
+    priority = action_priority if action_priority is not None else severity
     return Finding(
-        id=finding_id, title=title, severity=severity, evidence=evidence,
+        id=finding_id,
+        title=title,
+        severity=severity,
+        evidence=evidence,
         suggested_action=SuggestedAction(
-            summary=action_summary, priority=action_priority,
+            summary=action_summary, priority=priority,
             how=action_how, why=action_why,
         ),
-        category="discoverability", check=check, url=url,
-        confidence=confidence, source_skill=SKILL_NAME,
+        category="discoverability",
+        check=check,
+        url=url,
+        confidence=confidence,
+        source_skill=SKILL_NAME,
     ).to_dict()
 
 
@@ -142,7 +159,8 @@ def run(url: str, id_prefix: str = "FR") -> dict:
             "Expose a clear last-updated date via meta tags or JSON-LD "
             "(dateModified) so assistants can judge how current the "
             "content is before relying on it.",
-            "medium",
+            action_priority="medium",
+            action_how="Add a 'dateModified' field to Organization/Article JSON-LD and include a <meta property='article:modified_time' content='...'> tag in <head>.",
             action_why="Without an explicit freshness signal, an assistant "
                        "has no basis to prefer this page over a possibly "
                        "outdated cached version, and may downweight it.",
@@ -151,10 +169,11 @@ def run(url: str, id_prefix: str = "FR") -> dict:
     elif most_recent:
         age_days = (datetime.now(timezone.utc) - most_recent).days
         if age_days > STALE_THRESHOLD_DAYS:
+            sev = "medium" if age_days < STALE_THRESHOLD_DAYS * 2 else "high"
             findings.append(_finding(
                 next_id(),
                 "Content freshness signal indicates the page may be stale",
-                "medium" if age_days < STALE_THRESHOLD_DAYS * 2 else "high",
+                sev,
                 f"Most recent freshness signal on {url} is "
                 f"{most_recent.date().isoformat()} ({age_days} days old): "
                 f"{all_dates}.",
@@ -162,13 +181,52 @@ def run(url: str, id_prefix: str = "FR") -> dict:
                 "dateModified/meta timestamp so assistants don't discount "
                 "the page as outdated; if the content itself is stale, "
                 "review and refresh it.",
-                "medium",
+                action_priority=sev,
+                action_how="Review and refresh page facts and update the 'dateModified' property in JSON-LD and meta tags to the current date.",
+                action_why="AI assistants prioritize recent and actively maintained sources when synthesizing answers.",
                 url=url, confidence="high", check="content_age",
             ))
 
-    # 2. Entity name candidates for corroboration (Organization/LocalBusiness
-    #    JSON-LD names, og:site_name, title brand suffix).
-    declared_org_names = set()
+    # 2. sameAs Authority Links Check (in Organization / Brand / LocalBusiness JSON-LD)
+    for obj in signals["jsonld_objects"]:
+        objs = obj if isinstance(obj, list) else [obj]
+        for o in objs:
+            if isinstance(o, dict) and o.get("@type") in (
+                "Organization", "LocalBusiness", "Corporation", "Brand"
+            ):
+                same_as = o.get("sameAs")
+                org_name = o.get("name") or o.get("legalName") or "Organization"
+                obj_type = o.get("@type")
+                has_same_as = bool(
+                    same_as and (
+                        (isinstance(same_as, list) and len(same_as) > 0 and any(str(s).strip() for s in same_as))
+                        or (isinstance(same_as, str) and same_as.strip())
+                    )
+                )
+                if not has_same_as:
+                    findings.append(_finding(
+                        next_id(),
+                        "Organization structured data lacks 'sameAs' authority links",
+                        "low",
+                        f"JSON-LD @type '{obj_type}' with name '{org_name}' contains no 'sameAs' cross-source authority references.",
+                        "Add 'sameAs' URLs to your Organization JSON-LD markup to anchor brand identity across the web.",
+                        action_priority="low",
+                        action_how="Add a 'sameAs' array to the Organization JSON-LD object containing authoritative profile URLs (e.g. Wikipedia, Wikidata, LinkedIn, Twitter/X, Crunchbase).",
+                        action_why="Per PS Appendix D: cross-source agreement establishes entity identity across the web, preventing AI assistants from conflating this brand with similarly named entities.",
+                        url=url, confidence="high", check="sameas_presence",
+                    ))
+
+    # 3. Tightened Entity Name Candidate Extraction for Corroboration (P2-b)
+    # A candidate is only evaluated for contradictions if it is a plausible concise
+    # brand/org name (<= 4 words, <= 40 chars) confirmed across at least two
+    # independent sources {<title>, JSON-LD name/legalName, og:site_name}
+    # OR is the sole <h1> on the page.
+    def _is_plausible_name(s: str) -> bool:
+        s = s.strip()
+        return 2 <= len(s) <= 40 and len(s.split()) <= 4
+
+    potential_candidates = set()
+    jsonld_org_names = set()
     for obj in signals["jsonld_objects"]:
         objs = obj if isinstance(obj, list) else [obj]
         for o in objs:
@@ -177,35 +235,59 @@ def run(url: str, id_prefix: str = "FR") -> dict:
             ):
                 for key in ("name", "legalName", "alternateName"):
                     val = o.get(key)
-                    if val and isinstance(val, str):
-                        declared_org_names.add(val.strip())
+                    if val and isinstance(val, str) and _is_plausible_name(val):
+                        jsonld_org_names.add(val.strip())
+                        potential_candidates.add(val.strip())
 
     og_site_name = signals.get("open_graph", {}).get("og:site_name")
-    if og_site_name:
-        declared_org_names.add(og_site_name.strip())
+    if og_site_name and _is_plausible_name(og_site_name):
+        potential_candidates.add(og_site_name.strip())
 
-    # Try extracting brand suffix from title (e.g. "Products | Acme Corp" -> "Acme Corp")
     title_text = signals["title"] or ""
-    if "|" in title_text or " - " in title_text:
-        parts = [p.strip() for p in re.split(r"[|\-]", title_text) if p.strip()]
-        if parts:
-            declared_org_names.add(parts[-1])
+    if "|" in title_text or " - " in title_text or " : " in title_text or ":" in title_text:
+        parts = [p.strip() for p in re.split(r"[|\-:]", title_text) if p.strip()]
+        for p in parts:
+            if _is_plausible_name(p):
+                potential_candidates.add(p)
+    elif title_text and _is_plausible_name(title_text):
+        potential_candidates.add(title_text.strip())
+
+    h1s = signals["headings"].get("h1", [])
+    if len(h1s) == 1 and _is_plausible_name(h1s[0]):
+        potential_candidates.add(h1s[0].strip())
+
+    # Multi-source confirmation
+    confirmed_org_names = set()
+    for cand in potential_candidates:
+        cand_lower = cand.lower()
+        sources_count = 0
+        if title_text and cand_lower in title_text.lower():
+            sources_count += 1
+        if any(cand_lower in jname.lower() for jname in jsonld_org_names):
+            sources_count += 1
+        if og_site_name and cand_lower in og_site_name.lower():
+            sources_count += 1
+        if len(h1s) == 1 and cand_lower in h1s[0].lower():
+            sources_count += 1
+
+        if sources_count >= 2 or (len(h1s) == 1 and cand_lower == h1s[0].strip().lower()) or any(cand_lower == j.lower() for j in jsonld_org_names):
+            confirmed_org_names.add(cand)
 
     # Normalize entity names for comparison (strip corp suffixes, case-fold)
     def _norm(n: str) -> str:
         s = re.sub(r"\b(inc|corp|corporation|ltd|limited|co|llc|plc|gmbh|software|tech|technologies)\b", "", n, flags=re.I)
         return re.sub(r"[^\w\s]", "", s).strip().lower()
 
-    norm_names = {_norm(n): n for n in declared_org_names if len(_norm(n)) >= 3}
+    norm_names = {_norm(n): n for n in confirmed_org_names if len(_norm(n)) >= 3}
 
-    # Flag contradiction ONLY if 2+ distinct non-overlapping base brand names exist
+    # Flag contradiction ONLY if 2+ distinct non-overlapping confirmed base brand names exist
     distinct_base_names = list(norm_names.keys())
     has_conflict = False
     if len(distinct_base_names) >= 2:
-        # Check if any two names share no substring overlap
         n1, n2 = distinct_base_names[0], distinct_base_names[1]
         if n1 not in n2 and n2 not in n1:
             has_conflict = True
+
 
     if has_conflict:
         conflicting = [norm_names[k] for k in distinct_base_names[:2]]
@@ -219,18 +301,17 @@ def run(url: str, id_prefix: str = "FR") -> dict:
             "<title>, headings, and structured data. If these names are "
             "supposed to differ (e.g. brand vs. legal entity), make the "
             "relationship explicit in JSON-LD (e.g. alternateName).",
-            "low",
+            action_priority="medium",
+            action_how="Standardize brand naming across <title>, <h1>, and JSON-LD schema (name/legalName); declare trade names or legal parent names explicitly via alternateName.",
             action_why="Per the PS: when several different things could "
                        "share a name, an assistant can conflate entities "
                        "unless something clearly distinguishes them.",
             url=url, confidence="low", check="entity_name_consistency",
         ))
 
-    # 3. Facts flagged for external corroboration -- deliberately NOT
-    #    fetched here (see module docstring). The orchestrator/agent is
-    #    responsible for actually checking these with its own web_search.
+    # 4. Facts flagged for external corroboration
     facts_to_corroborate = []
-    primary_name = list(declared_org_names)[0] if declared_org_names else (signals["title"] or url)
+    primary_name = list(confirmed_org_names or potential_candidates)[0] if (confirmed_org_names or potential_candidates) else (signals["title"] or url)
     facts_to_corroborate.append({
         "claim": f"Entity presents itself as '{primary_name}'",
         "why_it_matters": "Confirms this is the entity most commonly "
@@ -259,7 +340,8 @@ def run(url: str, id_prefix: str = "FR") -> dict:
         "raw_evidence": {
             "freshness_signals": all_dates,
             "most_recent_signal": most_recent.isoformat() if most_recent else None,
-            "entity_candidates": sorted(declared_org_names),
+            "entity_candidates": sorted(potential_candidates),
+            "confirmed_entity_candidates": sorted(confirmed_org_names),
             "facts_to_corroborate": facts_to_corroborate,
         },
     }

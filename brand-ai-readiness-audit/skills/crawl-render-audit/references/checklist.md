@@ -1,8 +1,7 @@
-# Crawl/Render Audit -- detailed check reference
-
 | Check | Signal | Severity floor/ceiling | Notes |
 |---|---|---|---|
 | robots.txt disallow | `can_fetch()` False | critical | Only if robots.txt was actually readable |
+| Named AI crawlers disallow | `rp.can_fetch(agent, url)` False | critical / high | Cites exact matched line for GPTBot/ClaudeBot/PerplexityBot/Google-Extended |
 | robots.txt unreadable | fetch error | (no finding) | Reported as unknown, not disallow |
 | Fetch failure | transport error / no response | critical | Stops content checks |
 | HTTP >=500 | status code | critical | |
@@ -14,8 +13,11 @@
 | Missing title | empty `<title>` | high | |
 | Missing meta description | no `name="description"` | low | |
 | No canonical | no `rel="canonical"` | low | |
-| No sitemap.xml | 4xx/5xx on `/sitemap.xml` | low | |
+| Declared sitemap broken | 4xx/5xx on declared sitemap URL | medium | Validates robots.txt declared sitemaps (first 3) |
+| No sitemap.xml | 4xx/5xx on `/sitemap.xml` | low | Fallback when no sitemap declared |
+| No /llms.txt | 404 on `/llms.txt` | low | Proactive AI optimization suggestion |
 | Broken internal links | any 4xx/5xx among sampled (<=15) same-domain links | medium | Reports sample of failures |
+
 
 Rationale for each threshold is in Appendix A-C of the Round 3 PDF: crawl
 access, then readability, then fact extractability are treated as sequential

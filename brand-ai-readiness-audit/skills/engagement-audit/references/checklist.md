@@ -6,8 +6,9 @@
 | Multiple H1s | >1 `<h1>` elements | low | |
 | Title/H1 keyword mismatch | no shared 4+ letter words | medium, low confidence | Coarse heuristic |
 | Title/meta keyword mismatch | no shared 4+ letter words | low | Only checked if title/H1 already aligned |
-| Thin navigation | <2 same-domain links | medium | |
+| Thin navigation | <2 internal links | medium | Subdomain-aware (eTLD+1); isolates multi-part suffixes |
 | No CTA language | no CTA-pattern match in links/headings/title/meta | low | Deliberately low -- many legitimate pages have no CTA |
+
 
 All keyword-overlap checks are heuristics meant to approximate "context
 retention" (Appendix E of the PDF) -- they are capped at medium severity and

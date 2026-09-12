@@ -102,10 +102,49 @@ def fetch(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> FetchResult:
         )
 
 
+MULTI_PART_PUBLIC_SUFFIXES = {
+    "co.uk", "gov.uk", "org.uk", "ac.uk", "net.uk", "sch.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au",
+    "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp",
+    "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in", "gov.in", "edu.in",
+    "co.nz", "org.nz", "net.nz", "govt.nz",
+    "com.br", "org.br", "net.br", "gov.br",
+    "com.sg", "org.sg", "edu.sg", "gov.sg",
+}
+
+NAMED_AI_AGENTS = (
+    "GPTBot",
+    "ClaudeBot",
+    "PerplexityBot",
+    "Google-Extended",
+    "Applebot-Extended",
+)
+
+
+def get_registrable_domain(netloc: str) -> str:
+    """Return the eTLD+1 / registrable domain for a network location,
+    correctly handling multi-part public suffixes (e.g. co.uk, gov.uk)."""
+    if not netloc:
+        return ""
+    host = netloc.split(":")[0].lower().strip()
+    parts = host.split(".")
+    if len(parts) <= 2:
+        return host
+
+    last_two = f"{parts[-2]}.{parts[-1]}"
+    if last_two in MULTI_PART_PUBLIC_SUFFIXES:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
 def check_robots(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
     """Return robots.txt permission info for the given URL.
     Per RFC 9309, HTTP 404 (Not Found) means crawling is allowed.
-    Only network timeouts / 5xx errors treat access as unknown."""
+    Only network timeouts / 5xx errors treat access as unknown.
+
+    Checks general access (* and synthetic UA) AND named AI crawlers
+    (GPTBot, ClaudeBot, PerplexityBot, Google-Extended, Applebot-Extended)
+    specifically against the audited URL."""
     domain_root = get_domain_root(url)
     robots_url = urljoin(domain_root + "/", "robots.txt")
     rp = urllib.robotparser.RobotFileParser()
@@ -115,18 +154,47 @@ def check_robots(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
         req = urllib.request.Request(robots_url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read(200_000).decode("utf-8", errors="replace")
-        for line in raw.splitlines():
+        lines = raw.splitlines()
+        for line in lines:
             if line.strip().lower().startswith("sitemap:"):
                 parts = line.split(":", 1)
                 if len(parts) == 2 and parts[1].strip():
                     sitemaps.append(parts[1].strip())
-        rp.parse(raw.splitlines())
+        rp.parse(lines)
         allowed = rp.can_fetch(USER_AGENT, url) and rp.can_fetch("*", url)
+
+        # Check each named AI crawler against the EXACT audited URL
+        ai_agents_checked = {}
+        disallowed_ai_agents = []
+        for agent in NAMED_AI_AGENTS:
+            agent_allowed = rp.can_fetch(agent, url)
+            ai_agents_checked[agent] = agent_allowed
+            if not agent_allowed:
+                # Find matched or relevant disallow lines from raw robots.txt for evidence quoting
+                matched_rule = None
+                in_agent_section = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.lower().startswith("user-agent:"):
+                        ua_val = stripped.split(":", 1)[1].strip()
+                        in_agent_section = (ua_val.lower() == agent.lower())
+                    elif in_agent_section and stripped.lower().startswith("disallow:"):
+                        matched_rule = stripped
+                        break
+                if not matched_rule:
+                    matched_rule = "Disallow (inherited from wildcard or path rule)"
+                disallowed_ai_agents.append({
+                    "agent": agent,
+                    "matched_rule": matched_rule,
+                })
+
         return {
             "robots_txt_found": True,
             "robots_url": robots_url,
             "allowed": allowed,
             "sitemaps_declared": sitemaps,
+            "ai_agents_checked": ai_agents_checked,
+            "disallowed_ai_agents": disallowed_ai_agents,
             "raw_excerpt": raw[:500],
         }
     except urllib.error.HTTPError as e:
@@ -136,6 +204,8 @@ def check_robots(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
                 "robots_url": robots_url,
                 "allowed": True,  # RFC 9309: 404 means unrestricted access
                 "sitemaps_declared": [],
+                "ai_agents_checked": {agent: True for agent in NAMED_AI_AGENTS},
+                "disallowed_ai_agents": [],
                 "error": "HTTPError 404: Not Found (Unrestricted access)",
             }
         return {
@@ -143,6 +213,8 @@ def check_robots(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
             "robots_url": robots_url,
             "allowed": None,  # 5xx or server error
             "sitemaps_declared": [],
+            "ai_agents_checked": {agent: None for agent in NAMED_AI_AGENTS},
+            "disallowed_ai_agents": [],
             "error": f"HTTPError {e.code}: {e.reason}",
         }
     except Exception as e:  # noqa: BLE001
@@ -151,6 +223,8 @@ def check_robots(url: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
             "robots_url": robots_url,
             "allowed": None,  # unknown/network timeout
             "sitemaps_declared": [],
+            "ai_agents_checked": {agent: None for agent in NAMED_AI_AGENTS},
+            "disallowed_ai_agents": [],
             "error": f"{type(e).__name__}: {e}",
         }
 
@@ -331,8 +405,14 @@ def extract_html_signals(html: str) -> dict:
     }
 
 
-def resolve_links(base_url: str, links: list[str], same_domain_only: bool = True) -> list[str]:
-    domain = urlparse(normalize_url(base_url)).netloc
+def resolve_links(
+    base_url: str,
+    links: list[str],
+    same_domain_only: bool = True,
+    allow_subdomains: bool = False,
+) -> list[str]:
+    base_netloc = urlparse(normalize_url(base_url)).netloc
+    base_reg_domain = get_registrable_domain(base_netloc)
     resolved = []
     seen = set()
     for href in links:
@@ -340,8 +420,15 @@ def resolve_links(base_url: str, links: list[str], same_domain_only: bool = True
             continue
         absolute = urljoin(base_url, href)
         parsed = urlparse(absolute)
-        if same_domain_only and parsed.netloc != domain:
-            continue
+        link_netloc = parsed.netloc
+        if same_domain_only:
+            if allow_subdomains:
+                link_reg_domain = get_registrable_domain(link_netloc)
+                if link_reg_domain != base_reg_domain:
+                    continue
+            else:
+                if link_netloc != base_netloc:
+                    continue
         if absolute not in seen:
             seen.add(absolute)
             resolved.append(absolute)

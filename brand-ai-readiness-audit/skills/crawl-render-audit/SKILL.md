@@ -18,8 +18,10 @@ issues in isolation.
 ## Procedure (deterministic, in order)
 1. **Crawl access gate:** fetch `robots.txt` from the domain root; check
    whether the audited URL is disallowed for `*` or this bot's user agent.
-   If robots.txt cannot be read, treat permission as *unknown*, not
-   permitted — never assume access.
+   Additionally, evaluate permission against the audited URL for named AI
+   crawlers (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Google-Extended`,
+   `Applebot-Extended`) and record disallowed rules. If robots.txt cannot be
+   read, treat permission as *unknown*, not permitted — never assume access.
 2. **Reachability:** `GET` the URL with a short timeout and a size cap.
    Record status code and any transport error verbatim.
 3. **Readability:** parse the raw HTML (no JavaScript execution). Compute
@@ -33,9 +35,14 @@ issues in isolation.
    canonical link, and JSON-LD `<script type="application/ld+json">`
    blocks; attempt to parse each JSON-LD block and record parse failures
    separately from absence.
-5. **Sitemap:** check `/sitemap.xml` at the domain root.
-6. **Internal link health:** resolve up to 15 same-domain links found on the
+5. **Sitemap validation:** check declared sitemap URLs from `robots.txt`
+   (bounded to first 3 with short timeouts) and confirm reachability; fallback
+   to probing `/sitemap.xml` only if no sitemaps are declared.
+6. **LLMs.txt presence:** check `{domain_root}/llms.txt` for optional AI
+   markdown indexing file.
+7. **Internal link health:** resolve up to 15 same-domain links found on the
    page and issue a lightweight `GET` to each; report the count that error.
+
 
 ## Evidence requirements
 Each finding cites: the exact URL checked, the concrete measurement (byte/

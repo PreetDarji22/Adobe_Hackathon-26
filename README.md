@@ -1,3 +1,4 @@
+# brand-ai-readiness-audit
 
 An **Agent Skill Marketplace** for Adobe University Hackathon 2026, Round 3.
 Given any website URL, it audits both halves of the Round-2 problem —
@@ -13,12 +14,13 @@ brand-ai-readiness-audit/
 ├── README.md                 # this file
 ├── validate_marketplace.py   # structural self-check (run before zipping)
 ├── shared/                   # small stdlib-only helpers used by every skill
-│   ├── webutils.py           #   fetch, robots.txt, HTML/JSON-LD extraction
+│   ├── webutils.py           #   fetch, robots.txt, HTML/JSON-LD extraction, domain handling
 │   └── report_schema.py      #   Finding/Report dataclasses + schema validator
 ├── skills/
 │   ├── audit-orchestrator/       <- ENTRYPOINT
 │   │   ├── SKILL.md
-│   │   └── scripts/orchestrate.py
+│   │   ├── scripts/orchestrate.py
+│   │   └── references/checklist.md
 │   ├── crawl-render-audit/       <- off-site discoverability
 │   │   ├── SKILL.md
 │   │   ├── scripts/crawl_check.py
@@ -31,7 +33,7 @@ brand-ai-readiness-audit/
 │       ├── SKILL.md
 │       ├── scripts/engagement_check.py
 │       └── references/checklist.md
-└── tests/                    # offline unit tests (fixtures, no network)
+└── tests/                    # 55 offline unit tests (fixtures, no network)
 ```
 
 ## What each skill does
@@ -45,19 +47,23 @@ brand-ai-readiness-audit/
   against independent sources using the invoking agent's own `web_search`
   tool (see "Why corroboration isn't scripted" below).
 - **crawl-render-audit**: can the page even be crawled, read, and have
-  specific facts extracted from it? Checks robots.txt, HTTP status,
-  JS-render dependency (visible text vs. script-heavy raw HTML), JSON-LD/
-  schema.org presence and validity, title/meta/canonical, sitemap.xml, and
-  broken same-domain links.
+  specific facts extracted from it? Checks general robots.txt and named AI
+  crawlers (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Google-Extended`, `Applebot-Extended`),
+  HTTP status, JS-render dependency (visible text vs. script-heavy raw HTML),
+  JSON-LD/schema.org presence and validity, title/meta/canonical, declared sitemap
+  validation with `/sitemap.xml` fallback, optional `/llms.txt` presence, and
+  broken internal links.
 - **freshness-corroboration**: extracts local freshness signals
-  (`Last-Modified`, date meta tags, JSON-LD `dateModified`/`datePublished`)
-  and entity-name candidates, flags likely staleness or possible entity
-  ambiguity, and produces a short `facts_to_corroborate` list for the
-  orchestrator's agent-level verification step.
+  (`Last-Modified`, date meta tags, JSON-LD `dateModified`/`datePublished`),
+  validates `sameAs` cross-source authority links in Organization structured data,
+  evaluates entity-name candidates using high-confidence sources, flags likely
+  staleness or entity ambiguity, and produces a short `facts_to_corroborate` list
+  for the orchestrator's agent-level verification step.
 - **engagement-audit**: H1 presence/uniqueness, title/H1/meta topical
   alignment (a proxy for "does the landing page match the intent that
-  likely brought the visitor here"), same-domain navigation density, and
-  CTA language in actual link text.
+  likely brought the visitor here"), subdomain-aware navigation density
+  (handling multi-part public suffixes such as `.gov.uk` and `.co.uk` properly),
+  and CTA language in link and button elements.
 
 ## How the entrypoint composes the others
 
@@ -102,7 +108,12 @@ fields such as `proactive_suggestions` and `runtime_seconds` are additive):
       "title": "No JSON-LD structured data on product pages",
       "severity": "high",
       "evidence": "Crawled 12 product pages; 0/12 contain schema.org markup.",
-      "suggested_action": { "summary": "Add Product/Offer JSON-LD to every product page.", "priority": "high" }
+      "suggested_action": {
+        "summary": "Add Product/Offer JSON-LD to every product page.",
+        "priority": "high",
+        "how": "Add a <script type='application/ld+json'> block in <head> containing Product schema.",
+        "why": "Explicit structured data allows AI assistants to cite accurate details."
+      }
     }
   ]
 }
@@ -112,10 +123,9 @@ fields such as `proactive_suggestions` and `runtime_seconds` are additive):
 
 No third-party dependencies are required — every script uses only the
 Python standard library (`urllib`, `html.parser`, `json`, `urllib.robotparser`,
-`dataclasses`). Python 3.9+ is assumed (uses `list[str]`-style type hints).
+`dataclasses`). Python 3.9+ is supported.
 
 ```bash
-git clone <your-repo-url>
 cd brand-ai-readiness-audit
 python3 --version   # 3.9+
 ```
@@ -129,7 +139,7 @@ python3 skills/audit-orchestrator/scripts/orchestrate.py https://example.com
 python3 skills/audit-orchestrator/scripts/orchestrate.py https://example.com --out report.json
 ```
 
-Or run an individual sub-skill in isolation while iterating on it:
+Or run an individual sub-skill in isolation:
 
 ```bash
 python3 skills/crawl-render-audit/scripts/crawl_check.py https://example.com
@@ -145,20 +155,18 @@ python3 validate_marketplace.py
 
 ## Testing
 
-All tests run offline against local HTML fixtures in `tests/fixtures/` —
+All 55 tests run offline against local HTML fixtures in `tests/fixtures/` —
 `webutils.fetch` and `webutils.check_robots` are mocked, so no network
-access or live site is required to validate the logic:
+access is required:
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-Covers: HTML/JSON-LD extraction, robots.txt allow/deny/unknown handling,
-JS-render-dependency detection, freshness staleness thresholds, entity-name
-ambiguity, engagement heuristics (H1, title/H1 alignment, navigation, CTA
-text), full end-to-end orchestrator runs (including a fetch-failure path
-that must still produce a schema-valid report), and the marketplace's own
-structural validator.
+Covers: HTML/JSON-LD extraction, named AI crawler access checks, declared sitemap
+validation, `/llms.txt` detection, `sameAs` authority validation, entity candidate
+extraction tightening, subdomain-aware navigation, priority-severity reconciliation,
+and end-to-end orchestrator runs.
 
 ## Safety / guardrails
 
@@ -167,46 +175,16 @@ structural validator.
 - **robots.txt is honored**, and treated as "unknown" (not "allowed") if it
   can't be read — never fails open.
 - **Conservative crawling limits**: short timeouts, a per-page size cap, and
-  at most ~15 same-domain internal links checked per audit.
+  bounded link checking per audit.
 - **No pretrained model weights** are bundled.
-- **No external service is required** to resolve the marketplace itself —
-  `marketplace.json` and every skill folder are self-contained; the only
-  external calls are read-only `GET`s to the audited domain (plus the
-  agent's own `web_search` for the corroboration step).
-
-## A note on how this was tested
-
-All 32 automated tests run fully offline against local HTML fixtures with
-`fetch`/`check_robots` mocked — they validate the extraction, scoring, and
-schema logic without needing network access. This package has **not** been
-run against a live, real-world website end-to-end, because it was built in
-a sandboxed environment whose own outbound network access is restricted to
-a small package-manager allowlist and cannot reach arbitrary domains.
-Before relying on this for submission, run a real smoke test yourself from
-an environment with normal internet access:
-
-```bash
-python3 skills/audit-orchestrator/scripts/orchestrate.py https://<a-real-site-you-choose>
-```
-
-against a handful of sites across the categories in "Known limitations"
-below, and adjust thresholds in `crawl_check.py` / `engagement_check.py`
-if you see false positives on sites you know well.
+- **No external service is required** to resolve the marketplace itself.
 
 ## Known limitations
 
 - JS-render dependency is detected **heuristically** from raw HTML (visible
   text volume, script-to-text ratio, empty framework-root `div`s) rather
-  than by actually executing JavaScript in a headless browser. This keeps
-  the marketplace dependency-free and fast, at the cost of missing some
-  JS-dependent pages that don't match these specific signals.
+  than by executing JavaScript in a headless browser.
 - Engagement checks (title/H1 alignment, CTA presence) are text-based
-  heuristics, not visual/UX analysis — they flag things worth a closer
-  look, capped at medium severity or below, rather than asserting a
-  definitive UX verdict.
-- Freshness corroboration requires the invoking agent to actually run
-  `web_search` on the flagged claims; if the agent skips that step, the
-  report will still validate against the schema but won't include
-  corroboration findings.
-- Internal link/broken-link checking is capped at ~15 same-domain links per
-  audit to stay within the runtime budget on large sites.
+  heuristics, not visual/UX analysis.
+- Freshness corroboration requires the invoking agent to run `web_search` on
+  flagged claims.

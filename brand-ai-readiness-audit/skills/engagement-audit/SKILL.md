@@ -26,9 +26,12 @@ act, independent of the discoverability checks.
    flag a possible mismatch between what likely brought a visitor here and
    what the page shows (medium). If title and meta description share no
    keywords, flag a lower-severity snippet-mismatch issue.
-4. **Navigation:** count same-domain links found on the page. Fewer than 2
-   is flagged as a possible navigation dead end (medium) — a visitor with
-   nowhere obvious to go next.
+4. **Navigation:** count internal navigation links using subdomain-aware
+   registrable domain resolution (e.g. counting `en.wikipedia.org` from
+   `www.wikipedia.org` while isolating distinct domains under multi-part
+   suffixes like `.gov.uk` / `.co.uk`). Fewer than 2 is flagged as a possible
+   navigation dead end (medium) — a visitor with nowhere obvious to go next.
+
 5. **Call to action:** search link text and headings for common CTA
    language (buy, sign up, get started, contact, subscribe, etc.). Absence
    is flagged at low severity only — this is a soft signal, not proof of a
